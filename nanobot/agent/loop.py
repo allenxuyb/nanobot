@@ -8,7 +8,7 @@ import re
 import weakref
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from loguru import logger
 
@@ -28,7 +28,7 @@ from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import ChannelsConfig, ExecToolConfig
+    from nanobot.config.schema import ChannelsConfig, ContextConfig, ExecToolConfig
     from nanobot.cron.service import CronService
 
 
@@ -65,8 +65,9 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        context_config: ContextConfig | None = None,
     ):
-        from nanobot.config.schema import ExecToolConfig
+        from nanobot.config.schema import ContextConfig, ExecToolConfig
         self.bus = bus
         self.channels_config = channels_config
         self.provider = provider
@@ -80,6 +81,7 @@ class AgentLoop:
         self.brave_api_key = brave_api_key
         self.web_proxy = web_proxy
         self.exec_config = exec_config or ExecToolConfig()
+        self.context_config = context_config or ContextConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
 
@@ -129,6 +131,12 @@ class AgentLoop:
         self.tools.register(SpawnTool(manager=self.subagents))
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
+
+    def _get_context_limit(self) -> int:
+        """Get the context window size for the current model."""
+        from nanobot.providers.registry import get_context_limit
+
+        return get_context_limit(self.model, self.context_config.default_context_limit)
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -181,6 +189,7 @@ class AgentLoop:
         self,
         initial_messages: list[dict],
         on_progress: Callable[..., Awaitable[None]] | None = None,
+        session: Session | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop. Returns (final_content, tools_used, messages)."""
         messages = initial_messages
@@ -199,6 +208,22 @@ class AgentLoop:
                 max_tokens=self.max_tokens,
                 reasoning_effort=self.reasoning_effort,
             )
+
+            # Track token usage from API response
+            if response.usage and session:
+                prompt_tokens = response.usage.get("prompt_tokens", 0)
+                completion_tokens = response.usage.get("completion_tokens", 0)
+                total_tokens = response.usage.get("total_tokens", 0)
+                context_limit = self._get_context_limit()
+
+                logger.info(
+                    "Token usage: prompt={} completion={} total={} limit={}",
+                    prompt_tokens, completion_tokens, total_tokens, context_limit
+                )
+
+                if prompt_tokens:
+                    session.last_prompt_tokens = prompt_tokens
+                    session.peak_prompt_tokens = max(session.peak_prompt_tokens, prompt_tokens)
 
             if response.has_tool_calls:
                 if on_progress:
@@ -356,7 +381,7 @@ class AgentLoop:
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
             )
-            final_content, _, all_msgs = await self._run_agent_loop(messages)
+            final_content, _, all_msgs = await self._run_agent_loop(messages, session=session)
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
             return OutboundMessage(channel=channel, chat_id=chat_id,
@@ -402,20 +427,26 @@ class AgentLoop:
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
                                   content="🐈 nanobot commands:\n/new — Start a new conversation\n/stop — Stop the current task\n/help — Show available commands")
 
-        unconsolidated = len(session.messages) - session.last_consolidated
-        if (unconsolidated >= self.memory_window and session.key not in self._consolidating):
-            self._consolidating.add(session.key)
-            lock = self._consolidation_locks.setdefault(session.key, asyncio.Lock())
+        # Token-based consolidation trigger (higher priority than message-based)
+        context_limit = self._get_context_limit()
+        context_limit = self._get_context_limit()
+        if context_limit > 0 and session.last_prompt_tokens > 0:
+            status = session.get_context_status(
+                context_limit, self.context_config.token_buffer
+            )
+            if status["is_near_limit"] and session.key not in self._consolidating:
+                self._consolidating.add(session.key)
+                lock = self._consolidation_locks.setdefault(session.key, asyncio.Lock())
 
-            async def _consolidate_and_unlock():
-                try:
-                    async with lock:
-                        await self._consolidate_memory(session)
-                finally:
-                    self._consolidating.discard(session.key)
-                    _task = asyncio.current_task()
-                    if _task is not None:
-                        self._consolidation_tasks.discard(_task)
+                async def _consolidate_and_unlock():
+                    try:
+                        async with lock:
+                            await self._consolidate_memory(session)
+                    finally:
+                        self._consolidating.discard(session.key)
+                        _task = asyncio.current_task()
+                        if _task is not None:
+                            self._consolidation_tasks.discard(_task)
 
             _task = asyncio.create_task(_consolidate_and_unlock())
             self._consolidation_tasks.add(_task)
@@ -443,10 +474,22 @@ class AgentLoop:
 
         final_content, _, all_msgs = await self._run_agent_loop(
             initial_messages, on_progress=on_progress or _bus_progress,
+            session=session,
         )
 
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
+
+        # Check context status and add warning if needed
+        context_limit = self._get_context_limit()
+        if context_limit > 0 and session.last_prompt_tokens > 0:
+            status = session.get_context_status(
+                context_limit, self.context_config.token_buffer
+            )
+            if status["is_critical"]:
+                ratio = status["usage_ratio"]
+                warning = f"\n\n_Warning: Context is {ratio:.0%} full. Use /new to start fresh._"
+                final_content += warning
 
         self._save_turn(session, all_msgs, 1 + len(history))
         self.sessions.save(session)

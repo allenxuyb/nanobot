@@ -383,6 +383,105 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Model context limits
+# ---------------------------------------------------------------------------
+
+# Context window sizes for common models (in tokens)
+MODEL_CONTEXT_LIMITS: dict[str, int] = {
+    # Anthropic Claude
+    "claude-opus-4": 200_000,
+    "claude-sonnet-4": 200_000,
+    "claude-3-5-opus": 200_000,
+    "claude-3-5-sonnet": 200_000,
+    "claude-3-5-haiku": 200_000,
+    "claude-3-opus": 200_000,
+    "claude-3-sonnet": 200_000,
+    "claude-3-haiku": 200_000,
+    "claude-2": 100_000,
+    "claude-instant": 100_000,
+    # OpenAI GPT
+    "gpt-4o": 128_000,
+    "gpt-4o-mini": 128_000,
+    "gpt-4-turbo": 128_000,
+    "gpt-4-0125-preview": 128_000,
+    "gpt-4-1106-preview": 128_000,
+    "gpt-4-vision": 128_000,
+    "gpt-4": 8_192,
+    "gpt-4-32k": 32_768,
+    "gpt-3.5-turbo": 16_385,
+    "gpt-3.5-turbo-16k": 16_385,
+    "o1": 200_000,
+    "o1-mini": 128_000,
+    "o1-preview": 128_000,
+    # DeepSeek
+    "deepseek-chat": 64_000,
+    "deepseek-coder": 64_000,
+    "deepseek-reasoner": 64_000,
+    # Google Gemini
+    "gemini-2.0-flash": 1_048_576,
+    "gemini-1.5-pro": 2_097_152,
+    "gemini-1.5-flash": 1_048_576,
+    "gemini-1.5-flash-8b": 1_048_576,
+    "gemini-pro": 32_760,
+    # Meta Llama
+    "llama-3.1-405b": 128_000,
+    "llama-3.1-70b": 128_000,
+    "llama-3.1-8b": 128_000,
+    "llama-3-70b": 8_192,
+    "llama-3-8b": 8_192,
+    # Mistral
+    "mistral-large": 128_000,
+    "mistral-medium": 32_000,
+    "mistral-small": 128_000,
+    "codestral": 32_000,
+    # Qwen
+    "qwen-max": 32_000,
+    "qwen-plus": 128_000,
+    "qwen-turbo": 128_000,
+    "qwen2.5": 128_000,
+    # Moonshot Kimi
+    "kimi-k2.5": 131_072,
+    "moonshot-v1": 128_000,
+    # Zhipu GLM
+    "glm-4": 128_000,
+    "glm-4-plus": 1_048_576,
+    "glm-4-air": 128_000,
+    # Groq
+    "llama3-70b-8192": 8_192,
+    "llama3-8b-8192": 8_192,
+    "mixtral-8x7b": 32_768,
+}
+
+
+def get_context_limit(model: str, default: int = 200_000) -> int:
+    """
+    Get the context window size for a model.
+
+    Args:
+        model: Model name (may include provider prefix like "anthropic/claude-3-opus")
+        default: Default context limit if model is unknown
+
+    Returns:
+        Context window size in tokens
+    """
+    # Strip provider prefix if present (e.g., "anthropic/claude-3-opus" → "claude-3-opus")
+    model_name = model.split("/")[-1] if "/" in model else model
+    model_lower = model_name.lower()
+
+    # Try exact match first
+    for key, limit in MODEL_CONTEXT_LIMITS.items():
+        if key.lower() == model_lower:
+            return limit
+
+    # Try prefix match (e.g., "claude-3-opus-20240229" matches "claude-3-opus")
+    for key, limit in MODEL_CONTEXT_LIMITS.items():
+        if model_lower.startswith(key.lower()):
+            return limit
+
+    return default
+
+
+# ---------------------------------------------------------------------------
 # Lookup helpers
 # ---------------------------------------------------------------------------
 
