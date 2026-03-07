@@ -448,8 +448,8 @@ class AgentLoop:
                         if _task is not None:
                             self._consolidation_tasks.discard(_task)
 
-            _task = asyncio.create_task(_consolidate_and_unlock())
-            self._consolidation_tasks.add(_task)
+                _task = asyncio.create_task(_consolidate_and_unlock())
+                self._consolidation_tasks.add(_task)
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
         if message_tool := self.tools.get("message"):
