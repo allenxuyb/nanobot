@@ -2,9 +2,11 @@
 .assets
 .env
 *.pyc
+.DS_Store
 dist/
 build/
 docs/
+uv.lock
 *.egg-info/
 *.egg
 *.pyc
