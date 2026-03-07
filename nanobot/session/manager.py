@@ -30,6 +30,8 @@ class Session:
     updated_at: datetime = field(default_factory=datetime.now)
     metadata: dict[str, Any] = field(default_factory=dict)
     last_consolidated: int = 0  # Number of messages already consolidated to files
+    last_prompt_tokens: int = 0  # Token count from most recent API call
+    peak_prompt_tokens: int = 0  # Peak token count for this session
 
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
         """Add a message to the session."""
@@ -66,7 +68,33 @@ class Session:
         """Clear all messages and reset session to initial state."""
         self.messages = []
         self.last_consolidated = 0
+        self.last_prompt_tokens = 0
+        self.peak_prompt_tokens = 0
         self.updated_at = datetime.now()
+
+    def get_context_status(self, context_limit: int, buffer: int = 2000) -> dict[str, Any]:
+        """
+        Get the current context usage status.
+
+        Args:
+            context_limit: Maximum context window size in tokens
+            buffer: Reserved tokens for completion/tools
+
+        Returns:
+            Dict with usage_ratio, available_tokens, is_near_limit, is_critical
+        """
+        effective_limit = max(1, context_limit - buffer)
+        usage_ratio = min(1.0, self.last_prompt_tokens / effective_limit)
+        available = max(0, effective_limit - self.last_prompt_tokens)
+
+        return {
+            "usage_ratio": usage_ratio,
+            "used_tokens": self.last_prompt_tokens,
+            "available_tokens": available,
+            "limit": context_limit,
+            "is_near_limit": usage_ratio >= 0.80,
+            "is_critical": usage_ratio >= 0.95,
+        }
 
 
 class SessionManager:
@@ -132,6 +160,8 @@ class SessionManager:
             metadata = {}
             created_at = None
             last_consolidated = 0
+            last_prompt_tokens = 0
+            peak_prompt_tokens = 0
 
             with open(path, encoding="utf-8") as f:
                 for line in f:
@@ -145,6 +175,8 @@ class SessionManager:
                         metadata = data.get("metadata", {})
                         created_at = datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
                         last_consolidated = data.get("last_consolidated", 0)
+                        last_prompt_tokens = data.get("last_prompt_tokens", 0)
+                        peak_prompt_tokens = data.get("peak_prompt_tokens", 0)
                     else:
                         messages.append(data)
 
@@ -153,7 +185,9 @@ class SessionManager:
                 messages=messages,
                 created_at=created_at or datetime.now(),
                 metadata=metadata,
-                last_consolidated=last_consolidated
+                last_consolidated=last_consolidated,
+                last_prompt_tokens=last_prompt_tokens,
+                peak_prompt_tokens=peak_prompt_tokens,
             )
         except Exception as e:
             logger.warning("Failed to load session {}: {}", key, e)
@@ -170,7 +204,9 @@ class SessionManager:
                 "created_at": session.created_at.isoformat(),
                 "updated_at": session.updated_at.isoformat(),
                 "metadata": session.metadata,
-                "last_consolidated": session.last_consolidated
+                "last_consolidated": session.last_consolidated,
+                "last_prompt_tokens": session.last_prompt_tokens,
+                "peak_prompt_tokens": session.peak_prompt_tokens,
             }
             f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
             for msg in session.messages:

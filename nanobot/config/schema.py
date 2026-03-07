@@ -201,6 +201,15 @@ class QQConfig(Base):
 
 
 
+class ContextConfig(Base):
+    """Token-based context management configuration."""
+
+    default_context_limit: int = 200000  # Default limit for unknown models (200k)
+    consolidation_threshold: float = 0.80  # Trigger consolidation at 80%
+    warning_threshold: float = 0.95  # Warn user at 95%
+    token_buffer: int = 2000  # Reserved tokens for completion/tools
+
+
 class ChannelsConfig(Base):
     """Configuration for chat channels."""
 
@@ -231,6 +240,7 @@ class AgentDefaults(Base):
     max_tool_iterations: int = 40
     memory_window: int = 100
     reasoning_effort: str | None = None  # low / medium / high — enables LLM thinking mode
+    context: ContextConfig = Field(default_factory=ContextConfig)
 
 
 class AgentsConfig(Base):
