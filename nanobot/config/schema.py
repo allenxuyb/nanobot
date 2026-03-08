@@ -214,6 +214,7 @@ class ChannelsConfig(Base):
     """Configuration for chat channels."""
 
     send_progress: bool = True  # stream agent's text progress to the channel
+    send_thinking: bool = False  # stream thinking content (stripped from response.content)
     send_tool_hints: bool = False  # stream tool-call hints (e.g. read_file("…"))
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)

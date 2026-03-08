@@ -229,7 +229,8 @@ class AgentLoop:
                 if on_progress:
                     thought = self._strip_think(response.content)
                     if thought:
-                        await on_progress(thought)
+                        logger.info("Thinking: {}", thought[:200] + "..." if len(thought) > 200 else thought)
+                        await on_progress(thought, thinking=True)
                     await on_progress(self._tool_hint(response.tool_calls), tool_hint=True)
 
                 tool_call_dicts = [
@@ -455,10 +456,11 @@ class AgentLoop:
             channel=msg.channel, chat_id=msg.chat_id,
         )
 
-        async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
+        async def _bus_progress(content: str, *, tool_hint: bool = False, thinking: bool = False) -> None:
             meta = dict(msg.metadata or {})
             meta["_progress"] = True
             meta["_tool_hint"] = tool_hint
+            meta["_thinking"] = thinking
             await self.bus.publish_outbound(OutboundMessage(
                 channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
             ))
