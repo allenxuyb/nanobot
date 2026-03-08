@@ -9,6 +9,7 @@ import unicodedata
 
 from loguru import logger
 from telegram import BotCommand, ReplyParameters, Update
+from telegram.error import NetworkError
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from telegram.request import HTTPXRequest
 
@@ -566,7 +567,12 @@ class TelegramChannel(BaseChannel):
 
     async def _on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Log polling / handler errors instead of silently swallowing them."""
-        logger.error("Telegram error: {}", context.error)
+        error = context.error
+        # Network errors are transient, log as warning without stack trace
+        if isinstance(error, NetworkError):
+            logger.warning("Telegram network error (transient): {}", error)
+        else:
+            logger.error("Telegram error: {}", error)
 
     def _get_extension(self, media_type: str, mime_type: str | None) -> str:
         """Get file extension based on media type."""
